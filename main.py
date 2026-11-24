@@ -1,53 +1,59 @@
 #!/usr/bin/env python3
-"""THE WORLD IN ONE DAY - Tuesday, 24 November 2026.
+"""THE WORLD IN ONE DAY -- 24 November 2026, as one magazine cover.
 
-A dark "night edition" magazine cover summing up the day's world news,
-drawn with the Python standard library only (zlib + struct PNG writer,
-hand-built 5x7 bitmap font). No network, no randomness, no clock: two
-runs write identical bytes to /output/entry.png (falls back to
-./out/entry.png locally).
+A Python 3.13 standard-library-only program. It draws a 1024x1024 PNG
+(a dark "night edition" magazine cover) and writes it to
+$MAKEFUN_OUTPUT_DIR/entry.png (or /output/entry.png).
 
-Stories (all reported on 23-24 November 2026, verified from CNN, Reuters,
-The Times, WSJ, Le Monde and AP coverage):
-  Lead   Nvidia reinstates Jensen Huang as CEO after President Trump
-         pressed the board all weekend; shares jump 33%, Nasdaq +6%.
-  Second COP31 climate talks collapse in Antalya: final text drops all
-         mention of fossil fuels; EU and UK reject the pact.
-  Third  Ukraine sea drones sink the Russian corvette Merkury at the
-         Benghazi naval base, Libya; MV Angara hit, Ka-27 lost.
-  Strip  Indonesia: candy factory fire, 24 dead, 34 still missing.
-         Iran warns the US naval blockade may draw a response.
-         Vanuatu: magnitude 6.5 quake. Brazil: deadly storm.
+Stories, as reported on the day:
+  * Nvidia reinstates Jensen Huang as CEO after Trump pressed the board
+    all weekend; Vance led the push. Shares +33%, Nasdaq +6%, S&P +4%.
+  * COP31 in Antalya collapses with no deal after two weeks; the final
+    text drops every mention of fossil fuels. First failure since 2009.
+  * Ukrainian sea drones sink the Russian corvette Merkury off Benghazi,
+    Libya, and hit the cargo ship MV Angara; a Ka-27 helicopter destroyed.
+  * Also today: a candy-factory fire in Serang, Indonesia (24 dead,
+    34 still missing); Iran warns over a US blockade; a 6.5 quake off
+    Vanuatu; a deadly storm in Brazil.
+
+No network, no randomness, no clock: two runs write identical bytes.
 """
 
+import math
 import os
 import struct
 import zlib
 
-W, H = 1024, 1024
+WIDTH = 1024
+HEIGHT = 1024
 
 # ---------------------------------------------------------------- palette
-NAVY = (13, 27, 48)
-PANEL = (24, 48, 76)
-PAPER = (247, 242, 231)
-INK = (26, 26, 26)
-WHITE = (255, 255, 255)
-BLACK = (10, 10, 10)
-YELLOW = (232, 178, 44)
-GREEN = (118, 185, 0)
-GREEN_D = (52, 110, 20)
-RED = (200, 40, 40)
-BLUE = (31, 58, 110)
-SEA = (24, 74, 96)
-SKY = (214, 226, 232)
-SAND = (216, 198, 162)
-GREY = (150, 158, 172)
-ORANGE = (204, 92, 18)
-LIGHT = (180, 205, 225)
+INK_NAVY_TOP = (13, 27, 51)
+INK_NAVY_BOTTOM = (9, 19, 36)
+PANEL = (26, 50, 84)
+PANEL_DARK = (19, 38, 66)
+PAPER = (238, 243, 250)
+MUTED = (168, 186, 210)
+GOLD = (246, 178, 7)
+GOLD_DARK = (214, 148, 0)
+LEAF = (124, 179, 66)
+LEAF_DARK = (56, 120, 44)
+LEAF_PALE = (176, 214, 132)
+RUBY = (198, 47, 47)
+STEEL = (44, 82, 143)
+STEEL_PALE = (186, 210, 232)
+SEA = (18, 92, 122)
+TANGERINE = (232, 116, 28)
+SAND = (222, 200, 158)
+COAL = (12, 14, 18)
+EMBER = (246, 122, 26)
+FLAME = (250, 196, 48)
 
-# ---------------------------------------------------------------- 5x7 font
-# Each glyph is 7 rows of 5 bits ("#" on, "." off). Authored from scratch.
-_G = {
+
+# ------------------------------------------------------- tiny 5x7 bitmap font
+# Every glyph is 7 rows of 5 cells. "1" is ink, "0" is empty. Only those
+# two characters are ever used, so a symbol can never silently vanish.
+GLYPHS = {
     "A": ("01110", "10001", "10001", "11111", "10001", "10001", "10001"),
     "B": ("11110", "10001", "10001", "11110", "10001", "10001", "11110"),
     "C": ("01110", "10001", "10000", "10000", "10000", "10001", "01110"),
@@ -77,355 +83,404 @@ _G = {
     "0": ("01110", "10001", "10011", "10101", "11001", "10001", "01110"),
     "1": ("00100", "01100", "00100", "00100", "00100", "00100", "01110"),
     "2": ("01110", "10001", "00001", "00110", "01000", "10000", "11111"),
-    "3": ("11111", "00010", "00100", "00010", "00001", "10001", "01110"),
+    "3": ("11110", "00001", "00001", "01110", "00001", "00001", "11110"),
     "4": ("00010", "00110", "01010", "10010", "11111", "00010", "00010"),
     "5": ("11111", "10000", "11110", "00001", "00001", "10001", "01110"),
     "6": ("00110", "01000", "10000", "11110", "10001", "10001", "01110"),
     "7": ("11111", "00001", "00010", "00100", "01000", "01000", "01000"),
     "8": ("01110", "10001", "10001", "01110", "10001", "10001", "01110"),
     "9": ("01110", "10001", "10001", "01111", "00001", "00010", "01100"),
-    " ": (".....", ".....", ".....", ".....", ".....", ".....", "....."),
-    ".": (".....", ".....", ".....", ".....", ".....", ".##..", ".##.."),
-    ",": (".....", ".....", ".....", ".....", ".##..", ".#...", "#...."),
-    ":": (".....", ".##..", ".##..", ".....", ".##..", ".##..", "....."),
-    ";": (".....", ".##..", ".##..", ".....", ".##..", ".#...", "#...."),
-    "-": (".....", ".....", ".....", ".###.", ".....", ".....", "....."),
-    "'": ("..#..", "..#..", ".#...", ".....", ".....", ".....", "....."),
-    "/": ("....#", "...#.", "...#.", "..#..", ".#...", ".#...", "#...."),
-    "(": ("...#.", "..#..", ".#...", ".#...", ".#...", "..#..", "...#."),
-    ")": (".#...", "..#..", "...#.", "...#.", "...#.", "..#..", ".#..."),
-    "!": ("..#..", "..#..", "..#..", "..#..", "..#..", ".....", "..#.."),
-    "?": (".###.", "#...#", "....#", "...#.", "..#..", ".....", "..#.."),
-    "&": (".##..", "#..#.", "#.#..", ".#...", "#.#.#", "#..#.", ".##.#"),
-    "%": ("##..#", "##.#.", "....#", "...#.", "..#..", ".#...", "#.##."),
-    "+": (".....", "..#..", "..#..", ".###.", "..#..", "..#..", "....."),
-    "=": (".....", ".....", "#####", ".....", "#####", ".....", "....."),
-    '"': (".#.#.", ".#.#.", ".....", ".....", ".....", ".....", "....."),
+    " ": ("00000", "00000", "00000", "00000", "00000", "00000", "00000"),
+    "+": ("00000", "00100", "00100", "11111", "00100", "00100", "00000"),
+    "%": ("11001", "11010", "00010", "00100", "01000", "01011", "10011"),
+    "&": ("01100", "10010", "10100", "01000", "10101", "10010", "01101"),
+    "-": ("00000", "00000", "00000", "11111", "00000", "00000", "00000"),
+    ".": ("00000", "00000", "00000", "00000", "00000", "01100", "01100"),
+    ",": ("00000", "00000", "00000", "00000", "01100", "00100", "01000"),
+    ":": ("00000", "01100", "01100", "00000", "01100", "01100", "00000"),
+    "/": ("00001", "00010", "00010", "00100", "01000", "01000", "10000"),
+    "(": ("00010", "00100", "01000", "01000", "01000", "00100", "00010"),
+    ")": ("01000", "00100", "00010", "00010", "00010", "00100", "01000"),
+    "'": ("00100", "00100", "01000", "00000", "00000", "00000", "00000"),
+    "!": ("00100", "00100", "00100", "00100", "00100", "00000", "00100"),
+    "?": ("01110", "10001", "00001", "00010", "00100", "00000", "00100"),
+    "=": ("00000", "00000", "11111", "00000", "11111", "00000", "00000"),
 }
-_BLANK = (".....",) * 7
 
 
-def text_width(text, scale):
-    return len(text) * 6 * scale - scale
-
-
-def wrap(text, scale, max_w):
-    """Greedy word wrap; returns list of lines fitting max_w."""
-    lines, cur = [], ""
-    for word in text.split(" "):
-        trial = word if not cur else cur + " " + word
-        if text_width(trial, scale) <= max_w or not cur:
-            cur = trial
-        else:
-            lines.append(cur)
-            cur = word
-    if cur:
-        lines.append(cur)
-    return lines
+def glyph_lit_count(ch):
+    """How many lit cells a glyph has (used by the self-check)."""
+    rows = GLYPHS.get(ch)
+    if rows is None:
+        return 0
+    total = 0
+    for row in rows:
+        total += row.count("1")
+    return total
 
 
 # ------------------------------------------------------------------- canvas
 class Canvas:
-    def __init__(self, w, h, bg):
-        self.w, self.h = w, h
-        self.px = bytearray(w * h * 3)
-        for i in range(w * h):
-            self.px[3 * i] = bg[0]
-            self.px[3 * i + 1] = bg[1]
-            self.px[3 * i + 2] = bg[2]
+    """An RGB pixel buffer with small drawing helpers."""
 
-    def set(self, x, y, c):
-        if 0 <= x < self.w and 0 <= y < self.h:
-            i = (y * self.w + x) * 3
-            self.px[i], self.px[i + 1], self.px[i + 2] = c
+    def __init__(self, width, height):
+        self.width = width
+        self.height = height
+        self.pixels = bytearray(width * height * 3)
 
-    def rect(self, x, y, w, h, c):
-        x0, y0 = max(0, x), max(0, y)
-        x1, y1 = min(self.w, x + w), min(self.h, y + h)
+    def put(self, x, y, colour):
+        if 0 <= x < self.width and 0 <= y < self.height:
+            base = (y * self.width + x) * 3
+            self.pixels[base] = colour[0]
+            self.pixels[base + 1] = colour[1]
+            self.pixels[base + 2] = colour[2]
+
+    def fill(self, x, y, w, h, colour):
+        x0 = max(0, x)
+        y0 = max(0, y)
+        x1 = min(self.width, x + w)
+        y1 = min(self.height, y + h)
         for yy in range(y0, y1):
-            base = (yy * self.w + x0) * 3
+            base = (yy * self.width + x0) * 3
             for xx in range(x0, x1):
-                i = base + (xx - x0) * 3
-                self.px[i], self.px[i + 1], self.px[i + 2] = c
+                off = base + (xx - x0) * 3
+                self.pixels[off] = colour[0]
+                self.pixels[off + 1] = colour[1]
+                self.pixels[off + 2] = colour[2]
 
-    def hline(self, x, y, w, c, t=1):
-        self.rect(x, y, w, t, c)
+    def frame(self, x, y, w, h, colour, thick=2):
+        self.fill(x, y, w, thick, colour)
+        self.fill(x, y + h - thick, w, thick, colour)
+        self.fill(x, y, thick, h, colour)
+        self.fill(x + w - thick, y, thick, h, colour)
 
-    def vline(self, x, y, h, c, t=1):
-        self.rect(x, y, t, h, c)
+    def hline(self, x, y, length, colour, thick=1):
+        self.fill(x, y, length, thick, colour)
 
-    def line(self, x0, y0, x1, y1, c, t=1):
-        dx, dy = abs(x1 - x0), abs(y1 - y0)
+    def vline(self, x, y, length, colour, thick=1):
+        self.fill(x, y, thick, length, colour)
+
+    def line(self, x0, y0, x1, y1, colour, thick=1):
+        """Bresenham line, thickened by a small square brush."""
+        dx = abs(x1 - x0)
+        dy = -abs(y1 - y0)
         sx = 1 if x0 < x1 else -1
         sy = 1 if y0 < y1 else -1
-        err = dx - dy
+        err = dx + dy
         x, y = x0, y0
         while True:
-            self.rect(x - t // 2, y - t // 2, t, t, c)
+            half = thick // 2
+            self.fill(x - half, y - half, thick, thick, colour)
             if x == x1 and y == y1:
                 break
-            e2 = 2 * err
-            if e2 > -dy:
-                err -= dy
+            step = 2 * err
+            if step >= dy:
+                err += dy
                 x += sx
-            if e2 < dx:
+            if step <= dx:
                 err += dx
                 y += sy
 
-    def circle(self, cx, cy, r, c, fill=True):
-        for yy in range(cy - r, cy + r + 1):
-            dy = yy - cy
-            dx = int((r * r - dy * dy) ** 0.5) if r * r - dy * dy >= 0 else 0
-            if fill:
-                self.rect(cx - dx, yy, 2 * dx + 1, 1, c)
-            else:
-                self.set(cx - dx, yy, c)
-                self.set(cx + dx, yy, c)
+    def disc(self, cx, cy, radius, colour):
+        for yy in range(cy - radius, cy + radius + 1):
+            span = radius * radius - (yy - cy) * (yy - cy)
+            if span < 0:
+                continue
+            half = int(span ** 0.5)
+            self.fill(cx - half, yy, half * 2 + 1, 1, colour)
 
-    def ellipse(self, cx, cy, rx, ry, c):
-        for yy in range(cy - ry, cy + ry + 1):
-            dy = (yy - cy) / ry
-            dx = int(rx * (max(0.0, 1 - dy * dy)) ** 0.5)
-            self.rect(cx - dx, yy, 2 * dx + 1, 1, c)
+    def ring(self, cx, cy, radius, colour, thick=3):
+        for yy in range(cy - radius - thick, cy + radius + thick + 1):
+            for xx in range(cx - radius - thick, cx + radius + thick + 1):
+                dist = ((xx - cx) ** 2 + (yy - cy) ** 2) ** 0.5
+                if radius - thick <= dist <= radius:
+                    self.put(xx, yy, colour)
 
-    def poly(self, pts, c):
-        """Scanline fill of a simple polygon."""
-        if len(pts) < 3:
+    def triangle(self, p0, p1, p2, colour):
+        """Fill a triangle by scanning its rows."""
+        pts = sorted((p0, p1, p2), key=lambda p: p[1])
+        (ax, ay), (bx, by), (cx, cy) = pts
+        if ay == cy:
             return
-        ys = [p[1] for p in pts]
-        for y in range(min(ys), max(ys) + 1):
+        for yy in range(ay, cy + 1):
             xs = []
-            n = len(pts)
-            for i in range(n):
-                x0, y0 = pts[i]
-                x1, y1 = pts[(i + 1) % n]
-                if (y0 <= y < y1) or (y1 <= y < y0):
-                    xs.append(x0 + (y - y0) * (x1 - x0) / (y1 - y0))
-            xs.sort()
-            for k in range(0, len(xs) - 1, 2):
-                self.rect(int(xs[k]), y, max(1, int(xs[k + 1]) - int(xs[k])), 1, c)
-
-    def star(self, cx, cy, r_out, r_in, c, points=8):
-        import math
-        pts = []
-        for i in range(points * 2):
-            r = r_out if i % 2 == 0 else r_in
-            a = 3.141592653589793 * i / points - 3.141592653589793 / 2
-            pts.append((int(cx + r * math.cos(a)), int(cy + r * math.sin(a))))
-        self.poly(pts, c)
-
-    # ------------------------------------------------------------- text
-    def glyph(self, x, y, ch, scale, c):
-        rows = _G.get(ch.upper(), _BLANK)
-        for r, row in enumerate(rows):
-            for col, bit in enumerate(row):
-                if bit in ("1", "#"):
-                    self.rect(x + col * scale, y + r * scale, scale, scale, c)
-
-    def text(self, x, y, s, scale, c, align="left"):
-        w = text_width(s, scale)
-        if align == "center":
-            x = x - w // 2
-        elif align == "right":
-            x = x - w
-        for i, ch in enumerate(s):
-            self.glyph(x + i * 6 * scale, y, ch, scale, c)
-        return w
-
-    def para(self, x, y, lines, scale, c, leading=None):
-        lh = leading if leading is not None else 9 * scale
-        for i, ln in enumerate(lines):
-            self.text(x, y + i * lh, ln, scale, c)
-        return y + len(lines) * lh
-
-# ------------------------------------------------------------------ drawing
-def draw_masthead(cv):
-    cv.text(512, 26, "THE WORLD IN ONE DAY", 7, WHITE, align="center")
-    cv.rect(28, 92, 968, 34, YELLOW)
-    cv.text(44, 100, "TUESDAY, 24 NOVEMBER 2026", 3, INK)
-    cv.text(980, 100, "WORLD NEWS", 3, INK, align="right")
+            for (x0, y0), (x1, y1) in (((ax, ay), (bx, by)),
+                                       ((bx, by), (cx, cy)),
+                                       ((ax, ay), (cx, cy))):
+                if y0 == y1:
+                    continue
+                if min(y0, y1) <= yy <= max(y0, y1):
+                    t = (yy - y0) / (y1 - y0)
+                    xs.append(int(x0 + t * (x1 - x0)))
+            if len(xs) >= 2:
+                self.fill(min(xs), yy, max(xs) - min(xs) + 1, 1, colour)
 
 
-def draw_chip(cv, cx, cy, size):
-    """Green processor chip with pins and NVDA mark."""
-    half = size // 2
-    x0, y0 = cx - half, cy - half
-    # Pins on all four sides.
-    for i in range(7):
-        off = 14 + i * ((size - 28) // 6)
-        cv.rect(x0 + off, y0 - 14, 10, 14, LIGHT)
-        cv.rect(x0 + off, y0 + size, 10, 14, LIGHT)
-        cv.rect(x0 - 14, y0 + off, 14, 10, LIGHT)
-        cv.rect(x0 + size, y0 + off, 14, 10, LIGHT)
-    # Body and inner die.
-    cv.rect(x0, y0, size, size, GREEN)
-    cv.rect(x0 + 14, y0 + 14, size - 28, size - 28, GREEN_D)
-    cv.rect(x0 + 30, y0 + 30, size - 60, size - 60, GREEN)
-    cv.text(cx, y0 + size // 2 - 14, "NVDA", 4, WHITE, align="center")
-    # Circuit traces running off the chip corners.
-    cv.line(x0 - 40, y0 - 40, x0, y0, YELLOW, 3)
-    cv.line(x0 + size + 40, y0 - 40, x0 + size, y0, YELLOW, 3)
-    cv.line(x0 - 40, y0 + size + 40, x0, y0 + size, YELLOW, 3)
-    cv.line(x0 + size + 40, y0 + size + 40, x0 + size, y0 + size, YELLOW, 3)
+# --------------------------------------------------------------------- text
+def text_width(text, scale):
+    return len(text) * 6 * scale - scale
 
 
-def draw_hero(cv):
-    x0, y0, x1, y1 = 28, 140, 996, 516
-    cv.rect(x0, y0, x1 - x0, y1 - y0, PANEL)
-    cv.rect(x0, y0, x1 - x0, 5, YELLOW)
-    # Left: the chip and the market jump.
-    draw_chip(cv, 250, 300, 170)
-    cv.text(250, 416, "+33%", 6, YELLOW, align="center")
-    cv.text(250, 466, "NVIDIA SHARES", 2, WHITE, align="center")
-    # Right: kicker, headline, deck, market line.
-    cv.rect(480, 158, 488, 30, GREEN_D)
-    cv.text(496, 165, "TECH - SILICON VALLEY", 2, WHITE)
-    cv.text(980, 165, "LEAD STORY", 2, WHITE, align="right")
-    cv.text(480, 204, "HUANG IS BACK", 6, WHITE)
-    cv.text(480, 250, "AT NVIDIA", 6, YELLOW)
-    deck = wrap("TRUMP PRESSED THE BOARD ALL WEEKEND. THE BOARD "
-                "VOTED TO REINSTATE ITS CEO 11 DAYS AFTER HE QUIT "
-                "OVER AN AFFAIR WITH AN ALLEGED CHINESE SPY. "
-                "VANCE LED THE PUSH.", 2, 488)
-    cv.para(480, 306, deck, 2, PAPER, leading=20)
-    cv.hline(480, 436, 488, YELLOW, 2)
-    cv.text(480, 452, "NASDAQ +6% - S&P +4% - SHARES +33%", 2, YELLOW)
+def draw_text(canvas, x, y, text, scale, colour):
+    """Draw one line of upper-case bitmap text at (x, y)."""
+    cursor = x
+    for ch in text:
+        rows = GLYPHS.get(ch)
+        if rows is None:
+            cursor += 6 * scale
+            continue
+        for row_i, row in enumerate(rows):
+            for col_i, cell in enumerate(row):
+                if cell == "1":
+                    canvas.fill(cursor + col_i * scale,
+                                y + row_i * scale,
+                                scale, scale, colour)
+        cursor += 6 * scale
 
 
-def draw_cop31(cv):
-    x0, y0, x1, y1 = 28, 532, 500, 800
-    cv.rect(x0, y0, x1 - x0, y1 - y0, PANEL)
-    cv.rect(x0, y0, x1 - x0, 30, RED)
-    cv.text(x0 + 16, y0 + 8, "CLIMATE - ANTALYA, TURKEY", 2, WHITE)
-    cv.text(x0 + 16, y0 + 44, "COP31 COLLAPSES", 4, WHITE)
-    # Cracked-earth disc.
-    cx, cy, r = 138, 692, 52
-    cv.circle(cx, cy, r, SAND)
-    for rr in (r, r - 1):
-        for yy in range(cy - rr, cy + rr + 1):
-            dy = yy - cy
-            dx = int((rr * rr - dy * dy) ** 0.5)
-            cv.set(cx - dx, yy, INK)
-            cv.set(cx + dx, yy, INK)
-    crack = [(cx - 40, cy - 48), (cx - 12, cy - 18), (cx - 28, cy + 8),
-             (cx + 4, cy + 30), (cx - 8, cy + 50)]
-    for a, b in zip(crack, crack[1:]):
-        cv.line(a[0], a[1], b[0], b[1], BLACK, 4)
-    crack2 = [(cx + 20, cy - 46), (cx + 34, cy - 16), (cx + 22, cy + 14),
-              (cx + 42, cy + 40)]
-    for a, b in zip(crack2, crack2[1:]):
-        cv.line(a[0], a[1], b[0], b[1], BLACK, 3)
-    # NO DEAL stamp.
-    cv.rect(88, 748, 100, 30, RED)
-    cv.text(138, 756, "NO DEAL", 2, WHITE, align="center")
-    # Deck, right of the disc.
-    deck = wrap("NO DEAL AFTER TWO WEEKS. THE FINAL TEXT DROPS "
-                "FOSSIL FUELS. THE EU AND UK REJECT IT. FIRST "
-                "FAILURE SINCE 2009.", 2, 258)
-    cv.para(216, 636, deck, 2, PAPER, leading=19)
+def draw_centred(canvas, cx, y, text, scale, colour):
+    draw_text(canvas, cx - text_width(text, scale) // 2, y, text, scale, colour)
 
 
-def draw_ukraine(cv):
-    x0, y0, x1, y1 = 524, 532, 996, 800
-    cv.rect(x0, y0, x1 - x0, y1 - y0, PANEL)
-    cv.rect(x0, y0, x1 - x0, 30, BLUE)
-    cv.text(x0 + 16, y0 + 8, "WAR AT SEA - BENGHAZI, LIBYA", 2, WHITE)
-    cv.text(x0 + 16, y0 + 44, "WARSHIP SUNK", 4, WHITE)
-    # Sea, sinking ship, explosion, sea drones.
-    sx0, sy0, sx1, sy1 = x0 + 16, 626, x1 - 16, 706
-    cv.rect(sx0, sy0, sx1 - sx0, sy1 - sy0, SKY)
-    cv.rect(sx0, sy0 + 44, sx1 - sx0, sy1 - sy0 - 44, SEA)
-    cv.hline(sx0, sy0 + 44, sx1 - sx0, WHITE, 2)
-    # Ship hull, listing and half-submerged.
-    hull = [(sx0 + 90, sy0 + 52), (sx0 + 330, sy0 + 52),
-            (sx0 + 310, sy0 + 74), (sx0 + 110, sy0 + 74)]
-    cv.poly(hull, BLACK)
-    cv.rect(sx0 + 130, sy0 + 30, 120, 22, BLACK)
-    cv.rect(sx0 + 260, sy0 + 18, 26, 34, BLACK)
-    # Explosion at the bow.
-    cv.star(sx0 + 348, sy0 + 34, 26, 11, ORANGE)
-    cv.star(sx0 + 348, sy0 + 34, 15, 6, YELLOW)
-    # Two sea drones racing in with wakes.
-    for dx in (sx0 + 30, sx0 + 70):
-        cv.rect(dx, sy0 + 62, 26, 8, WHITE)
-        cv.hline(dx - 34, sy0 + 66, 32, WHITE, 2)
-    deck = wrap("SEVEN SEA DRONES SANK THE RUSSIAN CORVETTE "
-                "MERKURY AND HIT THE MV ANGARA. A KA-27 HELICOPTER "
-                "WAS DESTROYED. LIBYA CONDEMNS IT.", 2, 440)
-    cv.para(x0 + 16, 716, deck, 2, PAPER, leading=18)
+def draw_right(canvas, right, y, text, scale, colour):
+    draw_text(canvas, right - text_width(text, scale), y, text, scale, colour)
 
 
-def draw_strip(cv):
-    y0, y1 = 816, 976
-    cv.text(28, 820, "ALSO TODAY", 3, YELLOW)
-    cv.hline(28, 846, 968, YELLOW, 2)
+def wrap_lines(text, max_width, scale):
+    """Greedy word wrap into lines no wider than max_width pixels."""
+    words = text.split(" ")
+    lines = []
+    current = ""
+    for word in words:
+        trial = word if not current else current + " " + word
+        if text_width(trial, scale) <= max_width or not current:
+            current = trial
+        else:
+            lines.append(current)
+            current = word
+    if current:
+        lines.append(current)
+    return lines
+
+
+def draw_paragraph(canvas, x, y, text, max_width, scale, colour, leading=4):
+    lines = wrap_lines(text, max_width, scale)
+    for i, line in enumerate(lines):
+        draw_text(canvas, x, y + i * (7 * scale + leading), line, scale, colour)
+    return y + len(lines) * (7 * scale + leading)
+
+
+# ------------------------------------------------------------- scene pieces
+def draw_chip(canvas, x, y, size):
+    """A green processor chip with pins, for the Nvidia story."""
+    pin = 8
+    for i in range(6):
+        off = 12 + i * (size - 24) // 5
+        canvas.fill(x + off, y - pin, 6, pin, STEEL_PALE)
+        canvas.fill(x + off, y + size, 6, pin, STEEL_PALE)
+        canvas.fill(x - pin, y + off, pin, 6, STEEL_PALE)
+        canvas.fill(x + size, y + off, pin, 6, STEEL_PALE)
+    canvas.fill(x, y, size, size, LEAF)
+    canvas.frame(x, y, size, size, LEAF_DARK, 4)
+    inner = size // 4
+    canvas.fill(x + inner, y + inner, size - 2 * inner,
+                size - 2 * inner, LEAF_DARK)
+    canvas.fill(x + inner + 8, y + inner + 8,
+                size - 2 * inner - 16, size - 2 * inner - 16, LEAF)
+    draw_centred(canvas, x + size // 2, y + size // 2 - 10,
+                 "NVDA", 3, PAPER)
+
+
+def draw_cracked_earth(canvas, cx, cy, radius):
+    """A tan globe with a black crack down its middle."""
+    canvas.disc(cx, cy, radius, SAND)
+    canvas.ring(cx, cy, radius, COAL, 2)
+    crack = [(cx - 18, cy - radius + 6), (cx - 4, cy - radius // 2),
+             (cx - 16, cy - 6), (cx + 2, cy + radius // 3),
+             (cx - 10, cy + radius - 8)]
+    for (x0, y0), (x1, y1) in zip(crack, crack[1:]):
+        canvas.line(x0, y0, x1, y1, COAL, 4)
+    crack2 = [(cx + 22, cy - radius // 2), (cx + 12, cy),
+              (cx + 24, cy + radius // 2)]
+    for (x0, y0), (x1, y1) in zip(crack2, crack2[1:]):
+        canvas.line(x0, y0, x1, y1, COAL, 3)
+
+
+def draw_burst(canvas, cx, cy, radius):
+    """A starburst explosion in orange and yellow."""
+    for k in range(12):
+        ang = k * 30
+        long = radius if k % 2 == 0 else radius // 2
+        dx = int(long * math.cos(math.radians(ang)))
+        dy = int(long * math.sin(math.radians(ang)))
+        canvas.line(cx, cy, cx + dx, cy + dy,
+                    EMBER if k % 2 == 0 else FLAME, 5)
+    canvas.disc(cx, cy, radius // 3, FLAME)
+    canvas.disc(cx, cy, radius // 5, PAPER)
+
+
+def draw_sinking_ship(canvas, x, y, w, h):
+    """A warship low in the water, bow down, beside a burst."""
+    canvas.fill(x, y, w, h // 2, STEEL_PALE)
+    canvas.fill(x, y + h // 2, w, h // 2, SEA)
+    # hull: long dark shape, deeper at the left (sinking bow)
+    hull_top = y + h // 2 + 6
+    canvas.fill(x + 30, hull_top, w - 90, 26, COAL)
+    canvas.triangle((x + 30, hull_top), (x + 30, hull_top + 26),
+                    (x + 4, hull_top + 26), COAL)
+    canvas.triangle((x + w - 60, hull_top), (x + w - 60, hull_top + 26),
+                    (x + w - 34, hull_top + 26), COAL)
+    # superstructure and funnel
+    canvas.fill(x + 90, hull_top - 22, 110, 22, COAL)
+    canvas.fill(x + 230, hull_top - 34, 26, 34, COAL)
+    # white wake dashes
+    for wx in (x + 8, x + 44, x + 78):
+        canvas.fill(wx, hull_top + 34, 24, 4, PAPER)
+    draw_burst(canvas, x + w - 52, y + 34, 34)
+    # two small sea drones on the water
+    for dx in (x + 130, x + 300):
+        canvas.fill(dx, y + h - 12, 34, 8, PAPER)
+        canvas.fill(dx + 14, y + h - 22, 3, 10, PAPER)
+
+
+def draw_kicker(canvas, x, y, w, text, colour):
+    canvas.fill(x, y, w, 30, colour)
+    draw_text(canvas, x + 12, y + 8, text, 2, PAPER)
+
+
+# ------------------------------------------------------------------ picture
+def build_picture():
+    canvas = Canvas(WIDTH, HEIGHT)
+    # night-sky gradient, top to bottom
+    for yy in range(HEIGHT):
+        t = yy / (HEIGHT - 1)
+        r = int(INK_NAVY_TOP[0] + (INK_NAVY_BOTTOM[0] - INK_NAVY_TOP[0]) * t)
+        g = int(INK_NAVY_TOP[1] + (INK_NAVY_BOTTOM[1] - INK_NAVY_TOP[1]) * t)
+        b = int(INK_NAVY_TOP[2] + (INK_NAVY_BOTTOM[2] - INK_NAVY_TOP[2]) * t)
+        canvas.fill(0, yy, WIDTH, 1, (r, g, b))
+
+    # ---- masthead
+    draw_centred(canvas, WIDTH // 2, 20, "THE WORLD IN ONE DAY", 5, PAPER)
+    canvas.fill(28, 74, WIDTH - 56, 34, GOLD)
+    draw_text(canvas, 44, 82, "TUESDAY, 24 NOVEMBER 2026", 2, INK_NAVY_BOTTOM)
+    draw_right(canvas, WIDTH - 44, 82, "WORLD NEWS", 2, INK_NAVY_BOTTOM)
+    canvas.hline(28, 116, WIDTH - 56, GOLD, 3)
+
+    # ---- hero: Nvidia lead story
+    canvas.fill(28, 126, WIDTH - 56, 300, PANEL)
+    canvas.frame(28, 126, WIDTH - 56, 300, GOLD_DARK, 2)
+    # chip, left
+    canvas.line(96, 150, 150, 204, GOLD, 3)
+    canvas.line(372, 150, 318, 204, GOLD, 3)
+    canvas.line(96, 402, 150, 348, GOLD, 3)
+    canvas.line(372, 402, 318, 348, GOLD, 3)
+    draw_chip(canvas, 152, 160, 164)
+    draw_centred(canvas, 234, 336, "+33%", 5, GOLD)
+    draw_centred(canvas, 234, 380, "NVIDIA SHARES", 2, PAPER)
+    # headline + deck, right
+    draw_kicker(canvas, 470, 138, 526, "TECH - SILICON VALLEY", LEAF_DARK)
+    draw_right(canvas, 984, 146, "LEAD STORY", 2, PAPER)
+    draw_text(canvas, 470, 182, "HUANG IS BACK", 5, PAPER)
+    draw_text(canvas, 470, 222, "AT NVIDIA", 5, GOLD)
+    draw_paragraph(
+        canvas, 470, 268,
+        "TRUMP PRESSED THE BOARD ALL WEEKEND. THE BOARD VOTED TO "
+        "REINSTATE ITS CEO 11 DAYS AFTER HE QUIT OVER AN AFFAIR WITH "
+        "AN ALLEGED CHINESE SPY. VANCE LED THE PUSH.",
+        514, 2, PAPER, leading=5)
+    canvas.hline(470, 388, 514, GOLD, 2)
+    draw_text(canvas, 470, 400, "NASDAQ +6% - S&P +4% - SHARES +33%", 2, GOLD)
+
+    # ---- middle left: COP31 collapses
+    canvas.fill(28, 442, 468, 296, PANEL)
+    canvas.frame(28, 442, 468, 296, PANEL_DARK, 2)
+    draw_kicker(canvas, 28, 442, 468, "CLIMATE - ANTALYA, TURKEY", RUBY)
+    draw_text(canvas, 44, 484, "COP31 COLLAPSES", 4, PAPER)
+    draw_cracked_earth(canvas, 138, 618, 58)
+    canvas.fill(84, 688, 108, 30, RUBY)
+    draw_centred(canvas, 138, 695, "NO DEAL", 2, PAPER)
+    draw_paragraph(
+        canvas, 228, 540,
+        "NO DEAL AFTER TWO WEEKS. THE FINAL TEXT DROPS FOSSIL FUELS. "
+        "THE EU AND UK REJECT IT. FIRST FAILURE SINCE 2009.",
+        250, 2, PAPER, leading=5)
+
+    # ---- middle right: warship sunk off Libya
+    canvas.fill(528, 442, 468, 296, PANEL)
+    canvas.frame(528, 442, 468, 296, PANEL_DARK, 2)
+    draw_kicker(canvas, 528, 442, 468, "WAR AT SEA - BENGHAZI, LIBYA", STEEL)
+    draw_text(canvas, 544, 484, "WARSHIP SUNK", 4, PAPER)
+    draw_sinking_ship(canvas, 544, 526, 436, 108)
+    draw_paragraph(
+        canvas, 544, 648,
+        "SEVEN SEA DRONES SANK THE RUSSIAN CORVETTE MERKURY AND HIT "
+        "THE MV ANGARA. A KA-27 HELICOPTER WAS DESTROYED. LIBYA "
+        "CONDEMNS IT.",
+        436, 2, PAPER, leading=5)
+
+    # ---- also today strip
+    draw_text(canvas, 28, 756, "ALSO TODAY", 3, GOLD)
+    canvas.hline(28, 782, WIDTH - 56, GOLD, 3)
     cells = [
-        ("INDONESIA", RED, "24 DEAD",
+        ("INDONESIA", RUBY, "24 DEAD",
          "34 STILL MISSING AFTER CANDY FACTORY FIRE"),
-        ("IRAN", BLUE, "BLOCKADE",
+        ("IRAN", STEEL, "BLOCKADE",
          "TEHRAN WARNS THE US BLOCKADE MAY DRAW A RESPONSE"),
-        ("VANUATU", GREEN_D, "6.5 QUAKE",
+        ("VANUATU", LEAF_DARK, "6.5 QUAKE",
          "MAGNITUDE 6.5 QUAKE STRIKES OFF VANUATU"),
-        ("BRAZIL", ORANGE, "STORM",
+        ("BRAZIL", TANGERINE, "STORM",
          "DEADLY STORM DISPLACES THOUSANDS"),
     ]
-    cw, gap = 236, 8
-    for i, (kick, col, value, text) in enumerate(cells):
-        x0 = 28 + i * (cw + gap)
-        cv.rect(x0, 856, cw, 3, YELLOW)
-        cv.rect(x0, 859, cw, 22, col)
-        cv.text(x0 + 10, 865, kick, 2, WHITE)
-        cv.text(x0 + 10, 890, value, 3, WHITE)
-        lines = wrap(text, 2, cw - 20)
-        cv.para(x0 + 10, 918, lines[:3], 2, PAPER, leading=18)
+    cell_w = 232
+    for i, (place, band, big, small) in enumerate(cells):
+        cx = 28 + i * (cell_w + 8)
+        if i > 0:
+            # thin divider so neighbouring columns never read as one line
+            canvas.vline(cx - 5, 794, 136, GOLD_DARK, 2)
+        canvas.fill(cx, 794, cell_w, 26, band)
+        draw_text(canvas, cx + 10, 801, place, 2, PAPER)
+        draw_text(canvas, cx, 830, big, 3, PAPER)
+        draw_paragraph(canvas, cx, 862, small, cell_w, 2, PAPER, leading=4)
+
+    # ---- footer
+    canvas.hline(28, 942, WIDTH - 56, MUTED, 1)
+    draw_centred(canvas, WIDTH // 2, 956,
+                 "THE WORLD IN ONE DAY - TUESDAY 24 NOVEMBER 2026 - "
+                 "NEWS AS REPORTED ON THE DAY",
+                 1, MUTED)
+    return canvas
 
 
-def draw_footer(cv):
-    cv.hline(28, 986, 968, GREY, 1)
-    cv.text(512, 994, "THE WORLD IN ONE DAY - TUESDAY 24 NOVEMBER 2026 - "
-            "NEWS AS REPORTED ON THE DAY", 1, GREY, align="center")
+# ------------------------------------------------------------------ png out
+def png_chunk(kind, data):
+    out = struct.pack(">I", len(data)) + kind + data
+    out += struct.pack(">I", zlib.crc32(kind + data) & 0xFFFFFFFF)
+    return out
 
 
-# --------------------------------------------------------------------- PNG
-def write_png(cv, path):
+def write_png(canvas, path):
     raw = bytearray()
-    for y in range(cv.h):
-        raw.append(0)  # filter: none
-        raw.extend(cv.px[y * cv.w * 3:(y + 1) * cv.w * 3])
-    comp = zlib.compress(bytes(raw), 9)
-
-    def chunk(kind, data):
-        c = struct.pack(">I", len(data)) + kind + data
-        c += struct.pack(">I", zlib.crc32(kind + data) & 0xFFFFFFFF)
-        return c
-
-    ihdr = struct.pack(">IIBBBBB", cv.w, cv.h, 8, 2, 0, 0, 0)
-    png = b"\x89PNG\r\n\x1a\n"
-    png += chunk(b"IHDR", ihdr)
-    png += chunk(b"IDAT", comp)
-    png += chunk(b"IEND", b"")
-    with open(path, "wb") as f:
-        f.write(png)
-    return len(png)
+    row_bytes = canvas.width * 3
+    for yy in range(canvas.height):
+        raw.append(0)
+        start = yy * row_bytes
+        raw += canvas.pixels[start:start + row_bytes]
+    blob = b"\x89PNG\r\n\x1a\n"
+    blob += png_chunk(b"IHDR", struct.pack(">IIBBBBB", canvas.width,
+                                           canvas.height, 8, 2, 0, 0, 0))
+    blob += png_chunk(b"IDAT", zlib.compress(bytes(raw), 9))
+    blob += png_chunk(b"IEND", b"")
+    with open(path, "wb") as handle:
+        handle.write(blob)
+    return len(blob)
 
 
 def main():
-    cv = Canvas(W, H, NAVY)
-    draw_masthead(cv)
-    draw_hero(cv)
-    draw_cop31(cv)
-    draw_ukraine(cv)
-    draw_strip(cv)
-    draw_footer(cv)
-    out = "/output/entry.png"
-    try:
-        os.makedirs("/output", exist_ok=True)
-        n = write_png(cv, out)
-    except OSError:
-        os.makedirs("out", exist_ok=True)
-        out = os.path.join("out", "entry.png")
-        n = write_png(cv, out)
-    print("wrote %s (%d bytes, %dx%d)" % (out, n, W, H))
+    out_dir = os.environ.get("MAKEFUN_OUTPUT_DIR", "/output")
+    os.makedirs(out_dir, exist_ok=True)
+    canvas = build_picture()
+    size = write_png(canvas, os.path.join(out_dir, "entry.png"))
+    print("wrote entry.png (%d bytes, %dx%d)" % (size, WIDTH, HEIGHT))
 
 
 if __name__ == "__main__":
